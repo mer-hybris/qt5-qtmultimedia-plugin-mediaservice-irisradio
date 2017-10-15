@@ -22,6 +22,7 @@
 #include "radio-iris-commands.h"
 
 #include <QDebug>
+#include <QFile>
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -85,11 +86,38 @@ FMRadioIrisControl::~FMRadioIrisControl()
     if (m_fd != -1) {
         close(m_fd);
     }
+
+    qDebug() << "De-initting radio";
+    QByteArray fmInitPath = qgetenv("HYBRIS_FM_INIT_PATH");
+    if (QFile::exists(fmInitPath)) {
+        QFile f(fmInitPath);
+        if (f.open(QFile::WriteOnly)) {
+            f.write("0", 1);
+            f.close();
+            usleep(200000);
+        } else {
+            qDebug() << "Unable to open HYBRIS_FM_INIT_PATH (" << fmInitPath << ") for writing";
+        }
+
+    }
 }
 
 bool FMRadioIrisControl::initRadio()
 {
     qDebug("Initialize radio");
+
+    QByteArray fmInitPath = qgetenv("HYBRIS_FM_INIT_PATH");
+    if (QFile::exists(fmInitPath)) {
+        QFile f(fmInitPath);
+        if (f.open(QFile::WriteOnly)) {
+            f.write("1", 1);
+            f.close();
+            usleep(20000);
+        } else {
+            qDebug() << "Unable to open HYBRIS_FM_INIT_PATH (" << fmInitPath << ") for writing";
+        }
+    }
+
     m_fd = open("/dev/radio0", O_RDONLY | O_NONBLOCK);
     if (m_fd != -1) {
         m_tunerAvailable = true;
