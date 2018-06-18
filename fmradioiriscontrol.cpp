@@ -51,6 +51,7 @@ FMRadioIrisControl::FMRadioIrisControl()
       m_workerThread(0),
       m_fd(-1),
       m_muted(false),
+      m_stereoMode(QRadioTuner::Auto),
       m_stereo(false),
       m_low(false),
       m_tunerAvailable(false),
@@ -60,6 +61,7 @@ FMRadioIrisControl::FMRadioIrisControl()
       m_currentBand(QRadioTuner::FM),
       m_freqMin(0),
       m_freqMax(0),
+      m_pendingFreq(0),
       m_currentFreq(0),
       m_timer(new QTimer(this)),
       m_searchMode(QRadioTuner::SearchFast),
@@ -69,41 +71,21 @@ FMRadioIrisControl::FMRadioIrisControl()
       m_rdsError(false),
       m_programType(QRadioData::Undefined)
 {
-    initRadio();
+    qDebug("Create FM Radio iris Control");
     m_timer->setInterval(2000);
     connect(m_timer, SIGNAL(timeout()), this, SLOT(search()));
-    qDebug("Create FM Radio iris Control");
 }
 
 FMRadioIrisControl::~FMRadioIrisControl()
 {
-    m_timer->stop();
-    m_workerThread->setQuit();
-    SetCtrl(V4L2_CID_PRIVATE_IRIS_STATE, 0); // assuming this wakes blocking ioctl()
-    m_workerThread->wait();
-    delete m_workerThread;
-
-    if (m_fd != -1) {
-        close(m_fd);
-    }
-
-    qDebug() << "De-initting radio";
-    QByteArray fmInitPath = qgetenv("HYBRIS_FM_INIT_PATH");
-    if (QFile::exists(fmInitPath)) {
-        QFile f(fmInitPath);
-        if (f.open(QFile::WriteOnly)) {
-            f.write("0", 1);
-            f.close();
-            usleep(200000);
-        } else {
-            qDebug() << "Unable to open HYBRIS_FM_INIT_PATH (" << fmInitPath << ") for writing";
-        }
-
-    }
+    stop();
 }
 
 bool FMRadioIrisControl::initRadio()
 {
+    if (m_fd != -1)
+        return true;
+
     qDebug("Initialize radio");
 
     QByteArray fmInitPath = qgetenv("HYBRIS_FM_INIT_PATH");
@@ -120,8 +102,6 @@ bool FMRadioIrisControl::initRadio()
 
     m_fd = open("/dev/radio0", O_RDONLY | O_NONBLOCK);
     if (m_fd != -1) {
-        m_tunerAvailable = true;
-
         m_workerThread = new IrisWorkerThread(m_fd);
         connect(m_workerThread, SIGNAL(tunerAvailableChanged(bool)), this, SLOT(handleTunerAvailable(bool)));
         connect(m_workerThread, SIGNAL(rdsAvailableChanged(bool)), this, SLOT(handleRdsAvailable(bool)));
@@ -142,13 +122,12 @@ bool FMRadioIrisControl::initRadio()
         SetCtrl(V4L2_CID_PRIVATE_IRIS_SPACING, 2);
         SetCtrl(V4L2_CID_PRIVATE_IRIS_RDS_STD, 1);
         GetTuner();
-        GetFreq();
         SetCtrl(V4L2_CID_PRIVATE_IRIS_RDSON, 1);
         SetCtrl(V4L2_CID_PRIVATE_IRIS_REGION, IRIS_REGION_EU);
         SetCtrl(V4L2_CID_PRIVATE_IRIS_RDSGROUP_PROC, 255);//120
         SetCtrl(V4L2_CID_PRIVATE_IRIS_PSALL, 0);
         SetCtrl(V4L2_CID_PRIVATE_IRIS_ANTENNA, 0);
-        SetFreq(m_currentFreq);
+
         return true;
     }
 
@@ -200,38 +179,46 @@ int FMRadioIrisControl::frequency() const
 void FMRadioIrisControl::setFrequency(int frequency)
 {
     qint64 f = frequency;
-    v4l2_frequency freq;
 
     if (frequency < m_freqMin)
         f = m_freqMax;
     if (frequency > m_freqMax)
         f = m_freqMin;
 
-    if (m_fd > 0) {
+    if (m_tunerAvailable) {
+        v4l2_frequency freq;
         memset(&freq, 0, sizeof(freq));
         freq.tuner = 0;
         if (ioctl(m_fd, VIDIOC_G_FREQUENCY, &freq) >= 0) {
-            if (m_low) {
-                // For low, freq in units of 62.5Hz, so convert from Hz to units.
-                freq.frequency = (int)(f/62.5);
-            } else {
-                // For high, freq in units of 62.5kHz, so convert from Hz to units.
-                freq.frequency = (int)(f/62500);
-            }
-            ioctl(m_fd, VIDIOC_S_FREQUENCY, &freq);
-            m_currentFreq = f;
-            emit frequencyChanged(m_currentFreq);
-            m_radioText.clear();
-            emit radioTextChanged(m_radioText);
-            m_stationName.clear();
-            emit stationNameChanged(m_stationName);
-            m_programType = QRadioData::Undefined;
-            emit programTypeChanged(m_programType);
-            m_programTypeName.clear();
-            emit programTypeNameChanged(m_programTypeName);
-            m_stationId.clear();
-            emit stationIdChanged(m_stationId);
+            clear();
+            SetFreq(f);
         }
+    } else {
+        m_pendingFreq = frequency;
+    }
+}
+
+void FMRadioIrisControl::clear()
+{
+    if (!m_radioText.isEmpty()) {
+        m_radioText.clear();
+        emit radioTextChanged(m_radioText);
+    }
+    if (!m_stationName.isEmpty()) {
+        m_stationName.clear();
+        emit stationNameChanged(m_stationName);
+    }
+    if (m_programType != QRadioData::Undefined) {
+        m_programType = QRadioData::Undefined;
+        emit programTypeChanged(m_programType);
+    }
+    if (!m_programTypeName.isEmpty()) {
+        m_programTypeName.clear();
+        emit programTypeNameChanged(m_programTypeName);
+    }
+    if (!m_stationId.isEmpty()) {
+        m_stationId.clear();
+        emit stationIdChanged(m_stationId);
     }
 }
 
@@ -242,16 +229,21 @@ bool FMRadioIrisControl::isStereo() const
 
 QRadioTuner::StereoMode FMRadioIrisControl::stereoMode() const
 {
-    return QRadioTuner::Auto;
+    return m_stereoMode;
 }
 
 void FMRadioIrisControl::setStereoMode(QRadioTuner::StereoMode mode)
 {
+    m_stereoMode = mode;
+
+    if (!m_tunerAvailable)
+        return;
+
     bool stereo = true;
     v4l2_tuner tuner;
     memset(&tuner, 0, sizeof(tuner));
 
-    if (mode == QRadioTuner::ForceMono)
+    if (m_stereoMode == QRadioTuner::ForceMono)
         stereo = false;
 
     if (ioctl(m_fd, VIDIOC_G_TUNER, &tuner) >= 0) {
@@ -266,6 +258,9 @@ void FMRadioIrisControl::setStereoMode(QRadioTuner::StereoMode mode)
 
 int FMRadioIrisControl::signalStrength() const
 {
+    if (!m_tunerAvailable)
+        return 0;
+
     v4l2_tuner tuner;
     memset(&tuner, 0, sizeof(tuner));
     tuner.index = 0;
@@ -344,16 +339,7 @@ void FMRadioIrisControl::search()
         emit signalStrengthChanged(m_signalStrength);
     }
 
-    m_radioText.clear();
-    emit radioTextChanged(m_radioText);
-    m_stationName.clear();
-    emit stationNameChanged(m_stationName);
-    m_programType = QRadioData::Undefined;
-    emit programTypeChanged(m_programType);
-    m_programTypeName.clear();
-    emit programTypeNameChanged(m_programTypeName);
-    m_stationId.clear();
-    emit stationIdChanged(m_stationId);
+    clear();
     SetCtrl(V4L2_CID_PRIVATE_IRIS_SCANDWELL, 7);
     if (m_searchMode == QRadioTuner::SearchGetStationId) {
         SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCHMODE, SEEK);
@@ -363,7 +349,22 @@ void FMRadioIrisControl::search()
 
 void FMRadioIrisControl::handleTunerAvailable(bool available)
 {
-    m_tunerAvailable = available;
+    if (m_tunerAvailable != available) {
+        m_tunerAvailable = available;
+        emit stateChanged(m_tunerAvailable ? QRadioTuner::ActiveState : QRadioTuner::StoppedState);
+
+        if (m_tunerAvailable && m_pendingFreq > 0) {
+            int f = m_pendingFreq;
+            m_pendingFreq = 0;
+            setFrequency(f);
+        }
+
+        if (m_tunerAvailable && m_stereoMode != QRadioTuner::Auto)
+            setStereoMode(m_stereoMode);
+
+        if (!m_tunerAvailable)
+            clear();
+    }
 }
 
 void FMRadioIrisControl::handleRdsAvailable(bool available)
@@ -462,34 +463,37 @@ bool FMRadioIrisControl::isAntennaConnected() const
     return true;
 }
 
-void FMRadioIrisControl::searchForward()
+void FMRadioIrisControl::doSearch(bool forward)
 {
+    if (!m_tunerAvailable)
+        return;
+
     if (m_scanning) {
         cancelSearch();
         return;
     }
-    m_forward = true;
+    m_forward = forward;
     SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCHMODE, SEEK);
     SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCH_CNT, 0);
     SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCH_PTY, 0);
     search();
+}
+
+void FMRadioIrisControl::searchForward()
+{
+    doSearch(true);
 }
 
 void FMRadioIrisControl::searchBackward()
 {
-    if (m_scanning) {
-        cancelSearch();
-        return;
-    }
-    m_forward = false;
-    SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCHMODE, SEEK);
-    SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCH_CNT, 0);
-    SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCH_PTY, 0);
-    search();
+    doSearch(false);
 }
 
 void FMRadioIrisControl::searchAllStations(QRadioTuner::SearchMode searchMode)
 {
+    if (!m_tunerAvailable)
+        return;
+
     this->m_searchMode = searchMode;
     if (searchMode == QRadioTuner::SearchFast) {
         SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCHMODE, SCAN_FOR_STRONG);
@@ -509,6 +513,9 @@ void FMRadioIrisControl::searchAllStations(QRadioTuner::SearchMode searchMode)
 
 void FMRadioIrisControl::cancelSearch()
 {
+    if (!m_tunerAvailable)
+        return;
+
     m_searchMode = QRadioTuner::SearchFast;
     m_timer->stop();
     SetCtrl(V4L2_CID_PRIVATE_IRIS_SRCHON, 0);
@@ -518,10 +525,43 @@ void FMRadioIrisControl::cancelSearch()
 
 void FMRadioIrisControl::start()
 {
+    initRadio();
 }
 
 void FMRadioIrisControl::stop()
 {
+    if (m_currentFreq > 0)
+        m_pendingFreq = m_currentFreq;
+
+    m_timer->stop();
+    if (m_workerThread) {
+        m_workerThread->setQuit();
+        SetCtrl(V4L2_CID_PRIVATE_IRIS_STATE, 0); // assuming this wakes blocking ioctl()
+        m_workerThread->wait();
+        delete m_workerThread;
+        m_workerThread = 0;
+    }
+
+    if (m_fd != -1) {
+        close(m_fd);
+        m_fd = -1;
+    }
+
+    qDebug() << "De-initting radio";
+    QByteArray fmInitPath = qgetenv("HYBRIS_FM_INIT_PATH");
+    if (QFile::exists(fmInitPath)) {
+        QFile f(fmInitPath);
+        if (f.open(QFile::WriteOnly)) {
+            f.write("0", 1);
+            f.close();
+            usleep(200000);
+        } else {
+            qDebug() << "Unable to open HYBRIS_FM_INIT_PATH (" << fmInitPath << ") for writing";
+        }
+
+    }
+
+    clear();
 }
 
 QRadioTuner::Error FMRadioIrisControl::tunerError() const
@@ -846,6 +886,8 @@ void IrisWorkerThread::run()
     while (m_quit.loadAcquire() == 0) {
         getEvents(IRIS_BUF_EVENTS);
     }
+
+    emit tunerAvailableChanged(false);
 }
 
 void IrisWorkerThread::getEvents(int type)
