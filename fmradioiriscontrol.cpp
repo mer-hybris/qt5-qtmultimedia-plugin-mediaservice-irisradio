@@ -33,6 +33,10 @@
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
 
+#ifdef IRISRADIO_RESOURCE_POLICY
+#include <policy/resource.h>
+#endif
+
 static QString cconv = QString("áàéèíìóòúùÑÇŞß¡Ĳâäêëîïôöûüñçşğıĳªα©‰Ğěňőπ€£$←↑→↓º¹²³±İńűμ¿÷°¼½¾§ÁÀÉÈÍÌÓÒÚÙŘČŠŽÐĿÂÄÊËÎÏÔÖÛÜřčšžđŀÃÅÆŒŷÝÕØÞŊŔĆŚŹŦðãåæœŵýõøþŋŕćśźŧ ");
 
 static void cconvert(QString *str) {
@@ -47,6 +51,9 @@ static void cconvert(QString *str) {
 
 FMRadioIrisControl::FMRadioIrisControl()
     : QObject(),
+#ifdef IRISRADIO_RESOURCE_POLICY
+      m_radioResource(QStringLiteral("player")),
+#endif
       m_workerThread(0),
       m_fd(-1),
       m_muted(false),
@@ -73,11 +80,19 @@ FMRadioIrisControl::FMRadioIrisControl()
     qDebug("Create FM Radio iris Control");
     m_timer->setInterval(2000);
     connect(m_timer, SIGNAL(timeout()), this, SLOT(search()));
+
+#ifdef IRISRADIO_RESOURCE_POLICY
+    m_radioResource.addResourceObject(new ResourcePolicy::AudioResource);
+#endif
 }
 
 FMRadioIrisControl::~FMRadioIrisControl()
 {
     stop();
+
+#ifdef IRISRADIO_RESOURCE_POLICY
+    m_radioResource.deleteResource(ResourcePolicy::AudioPlaybackType);
+#endif
 }
 
 bool FMRadioIrisControl::initRadio()
@@ -512,10 +527,18 @@ void FMRadioIrisControl::cancelSearch()
 void FMRadioIrisControl::start()
 {
     initRadio();
+
+#ifdef IRISRADIO_RESOURCE_POLICY
+    m_radioResource.acquire();
+#endif
 }
 
 void FMRadioIrisControl::stop()
 {
+#ifdef IRISRADIO_RESOURCE_POLICY
+    m_radioResource.release();
+#endif
+
     if (m_currentFreq > 0)
         m_pendingFreq = m_currentFreq;
 

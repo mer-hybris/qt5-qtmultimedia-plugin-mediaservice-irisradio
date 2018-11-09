@@ -29,6 +29,10 @@
 #include <QObject>
 #include <QList>
 
+#ifdef IRISRADIO_RESOURCE_POLICY
+#include <policy/resource-set.h>
+#endif
+
 class IrisWorkerThread: public QThread
 {
     Q_OBJECT
@@ -153,6 +157,9 @@ private slots:
     void handlePsChanged(QRadioData::ProgramType type, const QString &stationId, const QString &stationName);
 
 private:
+#ifdef IRISRADIO_RESOURCE_POLICY
+    ResourcePolicy::ResourceSet m_radioResource;
+#endif
     IrisWorkerThread *m_workerThread;
 
     int m_fd;

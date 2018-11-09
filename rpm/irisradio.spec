@@ -15,6 +15,7 @@ BuildRequires:  qt5-qtcore-devel
 BuildRequires:  qt5-qmake
 BuildRequires:  pkgconfig(Qt5Core)
 BuildRequires:  pkgconfig(Qt5Multimedia)
+BuildRequires:  pkgconfig(libresourceqt5)
 
 %description
 Qt5 Iris FM Radio media service plugin

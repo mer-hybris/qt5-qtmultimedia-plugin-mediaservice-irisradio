@@ -4,6 +4,12 @@ load(configure)
 TARGET = qtmedia_irisradio
 QT += multimedia-private
 
+packagesExist(libresourceqt5) {
+    CONFIG += link_pkgconfig
+    PKGCONFIG += libresourceqt5
+    DEFINES += IRISRADIO_RESOURCE_POLICY
+}
+
 PLUGIN_TYPE = mediaservice
 PLUGIN_CLASS_NAME = FMRadioServicePlugin
 load(qt_plugin)
