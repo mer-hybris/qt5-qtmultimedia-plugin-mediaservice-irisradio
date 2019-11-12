@@ -22,6 +22,7 @@
 #include "radio-iris-commands.h"
 
 #include <QDebug>
+#include <QFile>
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -32,6 +33,9 @@
 
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
+
+static const QString fmInitSet = "/sys/module/radio_iris_transport/parameters/fmsmd_set";
+static const int fmInitSleepUs = 20 * 1000; // 20ms
 
 static QString cconv = QString("áàéèíìóòúùÑÇŞß¡Ĳâäêëîïôöûüñçşğıĳªα©‰Ğěňőπ€£$←↑→↓º¹²³±İńűμ¿÷°¼½¾§ÁÀÉÈÍÌÓÒÚÙŘČŠŽÐĿÂÄÊËÎÏÔÖÛÜřčšžđŀÃÅÆŒŷÝÕØÞŊŔĆŚŹŦðãåæœŵýõøþŋŕćśźŧ ");
 
@@ -80,44 +84,29 @@ FMRadioIrisControl::~FMRadioIrisControl()
     stop();
 }
 
-bool FMRadioIrisControl::initRadio()
+void FMRadioIrisControl::initRadio()
 {
-    if (m_fd != -1)
-        return true;
+    if (m_workerThread)
+        return;
 
     qDebug("Initialize radio");
-    m_fd = open("/dev/radio0", O_RDONLY | O_NONBLOCK);
-    if (m_fd != -1) {
-        m_workerThread = new IrisWorkerThread(m_fd);
-        connect(m_workerThread, SIGNAL(tunerAvailableChanged(bool)), this, SLOT(handleTunerAvailable(bool)));
-        connect(m_workerThread, SIGNAL(rdsAvailableChanged(bool)), this, SLOT(handleRdsAvailable(bool)));
-        connect(m_workerThread, SIGNAL(stereoStatusChanged(bool)), this, SLOT(handleStereoStatus(bool)));
-        connect(m_workerThread, SIGNAL(tuneSuccessful()), this, SLOT(handleTuneSuccesful()));
-        connect(m_workerThread, SIGNAL(seekComplete()), this, SLOT(handleSeekComplete()));
-        connect(m_workerThread, SIGNAL(frequencyChanged()), this, SLOT(handleFrequencyChanged()));
-        connect(m_workerThread, SIGNAL(stationsFound(const QList<int> &)),
-                this, SLOT(handleStationsFound(const QList<int> &)));
-        connect(m_workerThread, SIGNAL(radioTextChanged(const QString &)),
-                this, SLOT(handleRadioTextChanged(const QString &)));
-        connect(m_workerThread, SIGNAL(psChanged(QRadioData::ProgramType, const QString &, const QString &)),
-                this, SLOT(handlePsChanged(QRadioData::ProgramType, const QString &, const QString &)));
-        m_workerThread->start();
 
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_STATE, 1);
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_EMPHASIS, 0);
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_SPACING, 2);
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_RDS_STD, 1);
-        GetTuner();
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_RDSON, 1);
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_REGION, IRIS_REGION_EU);
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_RDSGROUP_PROC, 255);//120
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_PSALL, 0);
-        SetCtrl(V4L2_CID_PRIVATE_IRIS_ANTENNA, 0);
-
-        return true;
-    }
-
-    return false;
+    m_workerThread = new IrisWorkerThread();
+    connect(m_workerThread, SIGNAL(fileDescriptorOpen(int)), this, SLOT(handleFileDescriptorOpen(int)),
+            Qt::BlockingQueuedConnection);
+    connect(m_workerThread, SIGNAL(tunerAvailableChanged(bool)), this, SLOT(handleTunerAvailable(bool)));
+    connect(m_workerThread, SIGNAL(rdsAvailableChanged(bool)), this, SLOT(handleRdsAvailable(bool)));
+    connect(m_workerThread, SIGNAL(stereoStatusChanged(bool)), this, SLOT(handleStereoStatus(bool)));
+    connect(m_workerThread, SIGNAL(tuneSuccessful()), this, SLOT(handleTuneSuccesful()));
+    connect(m_workerThread, SIGNAL(seekComplete()), this, SLOT(handleSeekComplete()));
+    connect(m_workerThread, SIGNAL(frequencyChanged()), this, SLOT(handleFrequencyChanged()));
+    connect(m_workerThread, SIGNAL(stationsFound(const QList<int> &)),
+            this, SLOT(handleStationsFound(const QList<int> &)));
+    connect(m_workerThread, SIGNAL(radioTextChanged(const QString &)),
+            this, SLOT(handleRadioTextChanged(const QString &)));
+    connect(m_workerThread, SIGNAL(psChanged(QRadioData::ProgramType, const QString &, const QString &)),
+            this, SLOT(handlePsChanged(QRadioData::ProgramType, const QString &, const QString &)));
+    m_workerThread->start();
 }
 
 bool FMRadioIrisControl::isTunerAvailable() const
@@ -333,6 +322,22 @@ void FMRadioIrisControl::search()
     doSeek(m_forward ? 1 : 0);
 }
 
+void FMRadioIrisControl::handleFileDescriptorOpen(int fd)
+{
+    m_fd = fd;
+
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_STATE, 1);
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_EMPHASIS, 0);
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_SPACING, 2);
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_RDS_STD, 1);
+    GetTuner();
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_RDSON, 1);
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_REGION, IRIS_REGION_EU);
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_RDSGROUP_PROC, 255);//120
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_PSALL, 0);
+    SetCtrl(V4L2_CID_PRIVATE_IRIS_ANTENNA, 0);
+}
+
 void FMRadioIrisControl::handleTunerAvailable(bool available)
 {
     if (m_tunerAvailable != available) {
@@ -530,10 +535,7 @@ void FMRadioIrisControl::stop()
         m_workerThread = 0;
     }
 
-    if (m_fd != -1) {
-        close(m_fd);
-        m_fd = -1;
-    }
+    m_fd = -1;
 
     clear();
 }
@@ -840,9 +842,9 @@ int FMRadioIrisControl::GetFreq()
 }
 
 
-IrisWorkerThread::IrisWorkerThread(int fd)
+IrisWorkerThread::IrisWorkerThread()
     : QThread(),
-      m_fd(fd)
+      m_fd(-1)
 {
 }
 
@@ -857,11 +859,47 @@ void IrisWorkerThread::setQuit()
 
 void IrisWorkerThread::run()
 {
+    setFmInit(true);
+
+    m_fd = open("/dev/radio0", O_RDONLY | O_NONBLOCK);
+
+    if (m_fd < 0) {
+        qCritical() << "Failed to open /dev/radio0";
+        setFmInit(false);
+        return;
+    }
+
+    // Wait for a while after fd is opened to have v4l driver settle
+    usleep(10 * 1000);
+
+    emit fileDescriptorOpen(m_fd);
+
     while (m_quit.loadAcquire() == 0) {
         getEvents(IRIS_BUF_EVENTS);
     }
 
     emit tunerAvailableChanged(false);
+
+    close(m_fd);
+    m_fd = -1;
+
+    setFmInit(false);
+}
+
+void IrisWorkerThread::setFmInit(bool enable)
+{
+    if (QFile::exists(fmInitSet)) {
+        QFile f(fmInitSet);
+        if (f.open(QFile::WriteOnly)) {
+            f.write(enable ? "1" : "0", 1);
+            f.close();
+            if (enable)
+                usleep(fmInitSleepUs);
+        } else {
+            qCritical() << "Unable to open" << fmInitSet << "for writing";
+            return;
+        }
+    }
 }
 
 void IrisWorkerThread::getEvents(int type)

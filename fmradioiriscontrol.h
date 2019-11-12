@@ -34,7 +34,7 @@ class IrisWorkerThread: public QThread
     Q_OBJECT
 
 public:
-    IrisWorkerThread(int fd);
+    IrisWorkerThread();
     ~IrisWorkerThread();
 
     void setQuit();
@@ -43,6 +43,7 @@ protected:
     void run();
 
 signals:
+    void fileDescriptorOpen(int fd);
     void tunerAvailableChanged(bool available);
     void rdsAvailableChanged(bool available);
     bool stereoStatusChanged(bool stereo);
@@ -54,6 +55,7 @@ signals:
     void psChanged(QRadioData::ProgramType type, const QString &stationId, const QString &stationName);
 
 private:
+    void setFmInit(bool enable);
     void getEvents(int type);
 
     int m_fd;
@@ -141,6 +143,7 @@ signals:
     void error(QRadioData::Error err);
 
 private slots:
+    void handleFileDescriptorOpen(int fd);
     void search();
     void handleTunerAvailable(bool available);
     void handleRdsAvailable(bool available);
@@ -184,7 +187,7 @@ private:
     QString m_radioText;
 
     void clear();
-    bool initRadio();
+    void initRadio();
     void doSeek(int dir);
     void doSearch(bool forward);
     bool SetFreq(int frequency);//Hz
