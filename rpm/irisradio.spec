@@ -7,8 +7,7 @@ Name:       qt5-qtmultimedia-plugin-mediaservice-irisradio
 Summary:    Qt Multimedia - Iris FM Radio media service
 Version:    0.6.0
 Release:    1%{?dist}
-Group:      System/Libraries
-License:    LGPLv2.1
+License:    LGPLv2+
 URL:        https://github.com/mer-hybris/qt5-qtmultimedia-plugin-mediaservice-irisradio
 Source0:    %{name}-%{version}.tar.bz2
 BuildRequires:  qt5-qtcore-devel
@@ -37,4 +36,5 @@ rm -f %{buildroot}/usr/lib/cmake/Qt5Multimedia/Qt5Multimedia_FMRadioServicePlugi
 
 %files
 %defattr(-,root,root,-)
+%license COPYING
 %{_libdir}/qt5/plugins/mediaservice/libqtmedia_irisradio.so
